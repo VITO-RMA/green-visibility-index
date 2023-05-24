@@ -3,249 +3,212 @@
 *	to worry about edge effects.
 * This version is intended to be used with call gvi.py
 """
-
-from gvi import f
-from math import ceil
-from os import makedirs
-from os.path import exists
+import os
 from datetime import datetime
 from multiprocessing import Pool
+import argparse
 from fiona import open as fi_open
-from argparse import ArgumentParser
-from subprocess import call, DEVNULL
 from rasterio import open as rio_open
-from rasterio.transform import rowcol, xy
 from rasterio.mask import mask as rio_mask
+from rasterio.windows import from_bounds
 from rasterio.merge import merge as rio_merge
-from shapely.geometry import Polygon, mapping
-
-
-def coords2Array(a, coords):
-	"""
-	* convert between coords and array position
-	*  returns row,col (y,x) as expected by rasterio
-	"""
-	x, y = coords
-	r, c = rowcol(a, x, y)
-	return int(r), int(c)
-
-
-def array2Coords(a, index):
-	"""
-	* convert between array position and coords
-	*  params are row,col (y,x) as expected by rasterio
-	*  returns coords at the CENTRE of the cell
-	"""
-	row, col = index
-	x, y = xy(a, row, col)
-	return int(x), int(y)
+from rasterio.transform import rowcol, xy
+import rasterio
+from affine import Affine
+from shapely.geometry import Polygon
+import geopandas as gpd
+from gvi import process_part, create_weighting_mask, create_los_lines, distance_matrix
+from tqdm import tqdm
+import numpy as np
 
 
 def extractPolygon(src, poly):
-	"""
-	* extract a subset from a raster according to the specified bounds
-	* returns the dataset (numpy array) and metadata object
-	"""
+    """
+    * extract a subset from a raster according to the specified bounds
+    * returns the dataset (numpy array) and metadata object
+    """
+    from rasterio.features import geometry_mask
 
-	# extract the bit of src that intersects poly
-	out_data, out_transform = rio_mask(src, poly, crop=True, all_touched=True)
+    # Get the extent of the geometry
+    geometry_bounds = poly[0].bounds
+    transform = src.transform  # get the coordinate transformation
 
-	# create the metadata for the dataset
-	out_meta = src.meta
-	out_meta.update({
-		"height": out_data.shape[1],
-		"width": out_data.shape[2],
-		"transform": out_transform
-	})
+    geometry_window = from_bounds(*geometry_bounds, transform=transform)
+    # data, transform = rio_mask(src, poly, crop=True, all_touched=True)
+    data = src.read(1, window=geometry_window)
+    clipped_data = np.full((max(int(geometry_window.height), data.shape[0]), max(data.shape[1], int(geometry_window.width))), fill_value=0, dtype=np.float32)
+    if data.shape == clipped_data.shape:
+        clipped_data = data
+    else:
+        transform = rasterio.windows.transform(geometry_window, transform)
 
-	# return the mask and the metadata
-	return out_data[0], out_meta
+        # Clip the raster using the geometry
+        # Update the portion of clipped_data that overlaps with the geometry
+        window = rasterio.windows.from_bounds(*geometry_bounds, transform=transform)
+        row_offset = abs(int(window.row_off)) if window.row_off < 0 else 0
+        col_offset = abs(int(window.col_off)) if window.col_off < 0 else 0
+        clipped_data[row_offset:row_offset + int(data.shape[0]), col_offset:col_offset + int(data.shape[1])] = data
 
+    # create the metadata for the dataset
+    out_meta = src.meta
+    out_meta.update({
+        "height": clipped_data.shape[0],
+        "width": clipped_data.shape[1],
+        "transform": transform
+    })
 
-def outputFiles(crs, masks):
-	"""
-	* Output illustrative GIS (Shapefile and GeoTiff) files of the extracted
-	*  zones and the aoi polygons
-	"""
-
-	# create the file in write mode, with the required CRS (Proj4 string) and an empty schema
-	with fi_open('./tmp/aoi.shp', 'w',
-		driver = 'ESRI Shapefile',
-		crs = crs,
-		schema = {'geometry': 'Polygon', 'properties': {}}
-		) as o:
-
-		# loop through resulting masks
-		for m in range(len(masks)):
-
-			# write the splitter to shapefile
-			o.write({'geometry': mapping(masks[m]["aoi"]),'properties': {}})
-
-			# create a raster file
-			with rio_open(f'./tmp/{m}.tif', 'w',
-				driver =	masks[m]["meta"]["driver"],
-				height = 	masks[m]["meta"]["height"],
-				width =		masks[m]["meta"]["width"],
-				count =		masks[m]["meta"]["count"],
-				dtype =		masks[m]["meta"]["dtype"],
-				crs =		masks[m]["meta"]["crs"],
-				transform =	masks[m]["meta"]["transform"],
-				) as dst:
-
-				# write the data to the raster
-				dst.write(masks[m]["dtm"], 1)
+    # return the mask and the metadata
+    return clipped_data.astype(np.float32), out_meta
 
 
-# get settings from args
-parser = ArgumentParser(description="Labib's Greenspace Visibility Tool")
-parser.add_argument('--dtm', help='DTM layer for analysis', required=True)
-parser.add_argument('--dsm', help='DSM layer for analysis', required=True)
-parser.add_argument('--green', help='Binary GreenSpace layer for analysis', required=True)
-parser.add_argument('--aoi', help='Boundary of Area of Interest', required=True)
-parser.add_argument('--padding', help='Required padding for each mask in CRS units (e.g. radius of a viewshed)', required=True)
-parser.add_argument('--sections', nargs=2, help='x and y divisions for masking (e.g. 16 divisions would be `4 4`)', required=True)
-parser.add_argument('--out', help='Path for result file', required=True)
-args = vars(parser.parse_args())
+def run(res, padding, landbouw=True, grid='grid_vl', total_parts=1, part_nr=0):
+    global time, meta, bounds, transform, path
+    landbouw_str = "_landbouw"
+    if not landbouw:
+        landbouw_str = ""
+    dsm_path = rf"input_data/DSM_{res}m.tif"
+    dtm_path = rf"input_data/DTM_{res}m.tif"
+    green_path = rf"input_data/green_01{landbouw_str}_{res}m.tif"
+    grid_path = rf"input_data/{grid}.gpkg"
+    out_path = rf"output/green_vis_vl_{res}m_{padding}m{landbouw_str}_{part_nr}.tif"
+    # log start time and log start
+    time = datetime.now()
+    print(f"processes, started at {time}.")
+    # initialise masks array for the results
+    masks = []
+    grid_df = gpd.read_file(grid_path)
+    # get aoi bounds from shapefile
+    # read in raster data
+    grid_split_df = np.array_split(grid_df, total_parts)
+    grid_part_df = grid_split_df[part_nr]
+    with rio_open(dtm_path) as dtm_input:
+        with rio_open(dsm_path) as dsm_input:
+            with rio_open(green_path) as green_input:
+                meta = dtm_input.meta
+                if (dsm_input.width == dtm_input.width == green_input.width) == False or \
+                        (dsm_input.height == dtm_input.height == green_input.height) == False:
 
-# get args
-dtm_path = args['dtm']
-dsm_path = args['dsm']
-green_path = args['green']
-boundary_path = args['aoi']
-padding = int(args['padding'])
-sections = [ int(x) for x in args['sections'] ]
-out_path = args['out']
+                    print("rasters do not match!")
+                    print("width: \t\t", dsm_input.width == dtm_input.width == green_input.width)
+                    print("height: \t", dsm_input.height == dtm_input.height == green_input.height)
+                    if (dsm_input.res[0] == dtm_input.res[0] == green_input.res[0]) == False:
+                        print("resolution: \t", dsm_input.res[0] == dtm_input.res[0] == green_input.res[0])
+                        exit()
+                # build weighting mask
+                resolution = meta['transform'][0]
+                radius_px = int(padding // resolution)
+                weighting_mask = create_weighting_mask(resolution, radius_px)
+                pixel_line_list = create_los_lines(radius_px)
+                distance_arr = distance_matrix((radius_px * 2) + 1, radius_px, radius_px, resolution)
 
-# log start time and log start
-time = datetime.now()
-print(f"a {sections[0]}x{sections[1]} grid, {sections[0]*sections[1]} processes, started at {time}.")
+                for i, row in tqdm(grid_part_df.iterrows(), total=len(grid_part_df)):
+                    # verify raster dimensions and resolution
+                    bounds = row.geometry.bounds
+                    xmin, ymin, xmax, ymax = bounds
+                    transform = dtm_input.transform  # get the coordinate transformation
+                    raster_extent = rasterio.windows.bounds(rasterio.windows.Window(col_off=0, row_off=0, width=dtm_input.width, height=dtm_input.height), transform=transform)
+                    pixel_size = dtm_input.transform[0]
+                    x1 = np.floor((xmin - raster_extent[0]) / pixel_size) * pixel_size + raster_extent[0]
+                    y1 = raster_extent[3] - (np.ceil((raster_extent[3] - ymin) / pixel_size) * pixel_size)
+                    x2 = np.ceil((xmax - raster_extent[0]) / pixel_size) * pixel_size + raster_extent[0]
+                    y2 = raster_extent[3] - (np.floor((raster_extent[3] - ymax) / pixel_size) * pixel_size)
+                    bounds = (x1, y1, x2, y2)
+                    # construct a Shapely polygon for use in processing
+                    polygon = Polygon([
+                        (bounds[0] - (padding), bounds[1] - (padding)),  # bl
+                        (bounds[0] - (padding), bounds[3] + (padding + resolution)),  # tl
+                        (bounds[2] + (padding + resolution), bounds[3] + (padding + resolution)),  # tr
+                        (bounds[2] + (padding + resolution), bounds[1] - (padding))  # br
+                    ])
 
-# initialise masks array for the results
-masks = []
+                    # extract the polygon and append to masks list
+                    dtm, meta = extractPolygon(dtm_input, [polygon])
+                    dsm, _ = extractPolygon(dsm_input, [polygon])
+                    green, _ = extractPolygon(green_input, [polygon])
 
-# get aoi bounds from shapefile
-with fi_open(boundary_path) as boundary:
-	bounds = boundary.bounds
+                    xmin, ymin, xmax, ymax = bounds
+                    x_res, y_res = green_input.res
+                    new_transform = Affine(x_res, 0, xmin, 0, -y_res, ymax)
 
-# read in raster data
-with rio_open(dtm_path) as dtm_input:
-	with rio_open(dsm_path) as dsm_input:
-		with rio_open(green_path) as green_input:
+                    # Create a new window object based on the new bounds
+                    new_window = from_bounds(xmin, ymin, xmax, ymax, new_transform)
 
-			# verify raster dimensions and resolution
-			if (dsm_input.width == dtm_input.width == green_input.width) == False or \
-				(dsm_input.height == dtm_input.height == green_input.height) == False or \
-				(dsm_input.res[0] == dtm_input.res[0] == green_input.res[0]) == False:
-				print("rasters do not match!")
-				print("width: \t\t", dsm_input.width == dtm_input.width == green_input.width)
-				print("height: \t", dsm_input.height == dtm_input.height == green_input.height)
-				print("resolution: \t", dsm_input.res[0] == dtm_input.res[0] == green_input.res[0])
-				exit()
+                    # Update the metadata for the new raster
+                    new_meta = green_input.meta.copy()
+                    new_meta.update({
+                        'width': new_window.width,
+                        'height': new_window.height,
+                        'transform': new_transform})
+                    # make result object and append to masks list
+                    masks.append({
+                        "dtm": dtm,
+                        "dsm": dsm,
+                        "green": green,
+                        "meta": new_meta,
+                        "aoi": row.geometry,
+                        "weights": weighting_mask,
+                        "distance_arr": distance_arr,
+                        "pixel_line_list": pixel_line_list,
+                        "options": {
+                            "radius": padding,  # viewshed radius
+                            "o_height": 1.7,  # observer height
+                            "t_height": 0  # target height
+                        }
+                    })
 
-			# store metadata from dtm
-			meta = dtm_input.meta
+                    # print(masks[0])
+                    # exit()
 
-			# read data bands
-			dtm_data = dtm_input.read(1)
-			dsm_data = dsm_input.read(1)
-			green_data = green_input.read(1)
-
-			# adjust bounds to the raster by transforming to image space and back again
-			minx, miny = array2Coords(dtm_input.transform, coords2Array(dtm_input.transform, [bounds[0], bounds[1]]))
-			maxx, maxy = array2Coords(dtm_input.transform, coords2Array(dtm_input.transform, [bounds[2] + dtm_input.res[0], bounds[3] + dtm_input.res[0]]))
-
-			# get width and height of study area
-			w, h = (maxx - minx), (maxy - miny)
-
-			# get width and height of all aois (absorb offcut into first entry)
-			aoiWidth =  [int(w / sections[0])] * sections[0]
-			aoiWidth[0] += w - sum(aoiWidth)
-			aoiHeight = [int(h / sections[1])] * sections[1]
-			aoiHeight[0] += h - sum(aoiHeight)
-
-			# pre-calculate origin location polygon extraction
-			xOrigin = bounds[0] - padding
-			yOrigin = bounds[1] - padding
-
-			# loop through mask matrix
-			for x in range(sections[0]):
-				for y in range(sections[1]):
-
-					# construct a Shapely polygon for use in processing
-					polygon = Polygon([
-						(bounds[0] + sum(aoiWidth[:x]) - padding, bounds[1] + sum(aoiHeight[:y]) - padding), # bl
-						(bounds[0] + sum(aoiWidth[:x]) - padding, bounds[1] + sum(aoiHeight[:y+1]) + padding), # tl
-						(bounds[0] + sum(aoiWidth[:x+2]) + padding, bounds[1] + sum(aoiHeight[:y+1]) + padding), # tr
-						(bounds[0] + sum(aoiWidth[:x+1]) + padding, bounds[1] + sum(aoiHeight[:y]) - padding)  # br
-					])
-
-					# construct a shapely polygon for use in analysis and trimming the results
-					aoi = Polygon([
-						(bounds[0] + sum(aoiWidth[:x]), bounds[1] + sum(aoiHeight[:y])), # bl
-						(bounds[0] + sum(aoiWidth[:x]), bounds[1] + sum(aoiHeight[:y+1])), # tl
-						(bounds[0] + sum(aoiWidth[:x+1]), bounds[1] + sum(aoiHeight[:y+1])), # tr
-						(bounds[0] + sum(aoiWidth[:x+1]), bounds[1] + sum(aoiHeight[:y]))  # br
-					])
+            # output files for debugging purposes
+            # outputFiles(dtm_input.crs, masks)
+            # exit()
+    # make as many processes as are required and launch them
+    results = []
+    for m in tqdm(masks, total=len(masks)):
+        results.append(process_part(m))
+    # with Pool(processes) as p:
+    #     results = p.map(process_part, masks)
+    # open all result files in read mode
+    files = []
+    for filepath in results:
+        files.append(rio_open(filepath, 'r'))
+    # merge result files
+    merged, out_transform = rio_merge(files)
+    # update the metadata
+    out_meta = files[0].meta.copy()
+    out_meta.update({
+        "height": merged.shape[1],
+        "width": merged.shape[2],
+        "transform": out_transform,
+        "dtype": 'float32'
+    })
+    # create a raster file
+    with rio_open(out_path, 'w', **out_meta) as dst:
+        dst.write(merged[0], 1)
+    # use GDAL binary to calculate histogram and statistics
+    # call(["gdalinfo", "-stats", out_path], stdout=DEVNULL)
+    # close all of the files
+    for file in files:
+        file.close()
+    for path in results:
+        os.remove(path)
+    # print how long it took
+    print(datetime.now() - time)
+    print("done!")
 
 
-					# extract the polygon and append to masks list
-					dtm, meta = extractPolygon(dtm_input, [polygon])
-					dsm, _ = extractPolygon(dsm_input, [polygon])
-					green, _ = extractPolygon(green_input, [polygon])
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Run green visibility index calculation.')
+    parser.add_argument('total_parts', metavar='-tp', type=int,
+                        help='number of parts to split')
+    parser.add_argument('part_nr', type=int, metavar='-p', help='part to process')
 
-					# make result object and append to masks list
-					masks.append({
-						"dtm": dtm,
-						"dsm": dsm,
-						"green": green,
-						"meta": meta,
-						"aoi": aoi,
-						"options": {
-							"radius": padding,	# viewshed radius
-							"o_height": 1.7,		# observer height
-							"t_height": 0		# target height
-						}
-					})
-
-					# print(masks[0])
-					# exit()
-
-			# output files for debugging purposes
-			# outputFiles(dtm_input.crs, masks)
-			# exit()
-
-# make as many processes as are required and launch them
-with Pool(sections[0] * sections[1]) as p:
-	results = p.map(f, masks)
-
-# open all result files in read mode
-files = []
-for filepath in results:
-	files.append(rio_open(filepath, 'r'))
-
-# merge result files
-merged, out_transform = rio_merge(files)
-
-# update the metadata
-out_meta = files[0].meta.copy()
-out_meta.update({
-	"height": merged.shape[1],
-	"width": merged.shape[2],
-	"transform": out_transform,
-	"dtype": 'float64'
-	})
-
-# create a raster file
-with rio_open(out_path, 'w', **out_meta) as dst:
-	dst.write(merged[0], 1)
-
-# use GDAL binary to calculate histogram and statistics
-# call(["gdalinfo", "-stats", out_path], stdout=DEVNULL)
-
-# close all of the files
-for file in files:
-	file.close()
-
-# print how long it took
-print(datetime.now() - time)
-print("done!")
+    args = parser.parse_args()
+    total_parts = args.total_parts
+    part_nr = args.part_nr
+    res = 5
+    view_distances = [800]
+    # part_nr = 0
+    grid = 'grid_200m'
+    for view_distance in view_distances:
+        run(res, view_distance, landbouw=True, grid=grid, total_parts=total_parts, part_nr=part_nr)
