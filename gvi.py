@@ -8,7 +8,7 @@ from os.path import exists
 from uuid import uuid1
 
 import numpy as np
-from numba import njit, prange
+from numba import njit, prange, intp
 from numba.typed import List
 from numpy import zeros, column_stack
 from rasterio import open as rio_open
@@ -25,23 +25,22 @@ def coords2Array(a, x, y):
     return int(r), int(c)
 
 
-@njit(('types.Array(dtype=i4, ndim=2, layout="C"),i8,types.Array(dtype=f4, ndim=2, layout="C"),types.Array(dtype=i1, ndim=2, layout="C"),types.Array(dtype=f4, ndim=2, layout="C")'), fastmath=True)
+@njit(fastmath=True)
 def lineOfSight(pixels: np.ndarray, radius_px: int, visible_height_arr: np.ndarray, output: np.ndarray, reached_height_arr: np.ndarray):
     """
      * Runs a single ray-trace from one point to another point, returning a list of visible cells
     """
 
-    max_dydx = 0  # biggest dydx so far
+    max_dydx = -50  # biggest dydx so far
     if len(pixels) > 0 and len(pixels) < radius_px:
         max_dydx = reached_height_arr[(pixels[0][0], pixels[0][1])]
 
-    for i in range(len(pixels)):
-        r1, c1 = pixels[i]
+    for r1, c1 in pixels:
         cur_dydx = visible_height_arr[(r1, c1)]
         if (cur_dydx > max_dydx):
             max_dydx = cur_dydx
             output[(r1, c1)] = 1
-        reached_height_arr[r1, c1] = max_dydx
+        reached_height_arr[(r1, c1)] = max_dydx
 
 
 @njit
@@ -152,7 +151,7 @@ def numba_circle_perimeter(r, c, radius, shape=None):
 
 
 @njit(fastmath=True)
-def viewshed(radius_px, height0, dsm_data, pixel_line_list, distance_arr):
+def viewshed(radius_px, dsm_data, pixel_line_list, distance_arr):
     """
     * Use Bresenham's Circle / Midpoint algorithm to determine endpoints for viewshed
     """
@@ -168,7 +167,6 @@ def viewshed(radius_px, height0, dsm_data, pixel_line_list, distance_arr):
     reached_height_arr = zeros(distance_arr.shape, dtype=np.float32)
     visible_height_arr = dsm_data / distance_arr
     visible_height_arr[radius_px, radius_px] = 0
-    visible_height_arr = visible_height_arr.astype(np.float32)
     # max_height = np.max(visible_height_arr)
     # for pixels in pixel_line_list:
     for pixels in pixel_line_list:
@@ -181,7 +179,7 @@ def viewshed(radius_px, height0, dsm_data, pixel_line_list, distance_arr):
 
 def distance_matrix(size, r, c, resolution):
     # Create an empty distance matrix of the same size as the input matrix
-    dist_matrix = zeros((size, size), dtype=np.float32)
+    dist_matrix = np.zeros((size, size), dtype=np.float32)
     # Calculate the center row and column index
     center_row = r
     center_col = c
@@ -208,10 +206,8 @@ def process_part(mask):
     # get pixel references for aoi extents
     min_r, min_c = coords2Array(mask["meta"]["transform"], mask["aoi"].bounds[0], mask["aoi"].bounds[3])
     max_r, max_c = coords2Array(mask["meta"]["transform"], mask["aoi"].bounds[2], mask["aoi"].bounds[1])
-    sum([1 if len(c) == 160 else 0 for c in mask["pixel_line_list"]])
+
     pixel_line_list = List(mask["pixel_line_list"])
-    # pixel_line_list = [cuda.device_array_like(a) for a in mask['pixel_line_list']]
-    # print("go")
 
     # Set up the kernel configuration.
 
@@ -259,7 +255,7 @@ def create_los_lines(radius_px):
     i = 0
     for r, c in column_stack((los_path_rr, los_path_cc)):
         # calculate line of sight to each pixel
-        pixels = column_stack(numba_line(radius_px, radius_px, r, c))[1:].astype(int)
+        pixels = column_stack(numba_line(radius_px, radius_px, r, c))[1:]
         if previous_pixels is not None:
             new_part = pixels.copy()
             for pp, pn in zip(previous_pixels, pixels):
@@ -271,7 +267,7 @@ def create_los_lines(radius_px):
             if len(new_part) != len(pixels):
                 new_part = np.vstack((pixels[len(pixels) - len(new_part) - 1], new_part))
 
-            pixel_line_list.append(new_part.astype(int))
+            pixel_line_list.append(new_part)
         else:
             pixel_line_list.append(pixels)
         previous_pixels = pixels
@@ -289,16 +285,13 @@ def create_weighting_mask(resolution, radius_px):
 @njit(fastmath=True, parallel=True)
 def calculate_green_visibility_index_for_part(gvi: np.ndarray, o_height: float, dsm: np.ndarray, dtm: np.ndarray, green: np.ndarray, max_c: int, max_r: int, min_c: int,
                                               min_r: int, radius_px: int, weighting_mask: np.ndarray, pixel_line_list: np.ndarray, distance_arr: np.ndarray):
-    observer_height = dtm + o_height
-    dsm_obs = dsm - observer_height
+    dtm_o_height = dtm + o_height
     for r in prange(min_r, max_r + 1):
         for c in range(min_c, max_c + 1):
             # call (weighted) viewshed
-            height0 = observer_height[(r, c)]
+            dsm_data = dsm[r - radius_px:r + radius_px + 1, c - radius_px:c + radius_px + 1] - dtm_o_height[(r, c)]
 
-            dsm_data = dsm_obs[r - radius_px:r + radius_px + 1, c - radius_px:c + radius_px + 1]
-
-            output = viewshed(radius_px, height0, dsm_data, pixel_line_list, distance_arr)
+            output = viewshed(radius_px, dsm_data, pixel_line_list, distance_arr)
 
             # extract the viewshed data from the output surface and apply weighting mask
             visible = output[0:radius_px * 2 + 1, 0:radius_px * 2 + 1] * weighting_mask

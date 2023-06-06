@@ -3,23 +3,22 @@
 *	to worry about edge effects.
 * This version is intended to be used with call gvi.py
 """
+import argparse
 import os
 from datetime import datetime
-from multiprocessing import Pool
-import argparse
-from fiona import open as fi_open
-from rasterio import open as rio_open
-from rasterio.mask import mask as rio_mask
-from rasterio.windows import from_bounds
-from rasterio.merge import merge as rio_merge
-from rasterio.transform import rowcol, xy
+import os
+os.environ['USE_PYGEOS'] = '0'
+import geopandas as gpd
+import numpy as np
 import rasterio
 from affine import Affine
+from rasterio import open as rio_open
+from rasterio.merge import merge as rio_merge
+from rasterio.windows import from_bounds
 from shapely.geometry import Polygon
-import geopandas as gpd
-from gvi import process_part, create_weighting_mask, create_los_lines, distance_matrix
 from tqdm import tqdm
-import numpy as np
+
+from gvi import process_part, create_weighting_mask, create_los_lines, distance_matrix
 
 
 def extractPolygon(src, poly):
@@ -27,7 +26,6 @@ def extractPolygon(src, poly):
     * extract a subset from a raster according to the specified bounds
     * returns the dataset (numpy array) and metadata object
     """
-    from rasterio.features import geometry_mask
 
     # Get the extent of the geometry
     geometry_bounds = poly[0].bounds
@@ -37,10 +35,10 @@ def extractPolygon(src, poly):
     # data, transform = rio_mask(src, poly, crop=True, all_touched=True)
     data = src.read(1, window=geometry_window)
     clipped_data = np.full((max(int(geometry_window.height), data.shape[0]), max(data.shape[1], int(geometry_window.width))), fill_value=0, dtype=np.float32)
+    transform = rasterio.windows.transform(geometry_window, transform)
     if data.shape == clipped_data.shape:
         clipped_data = data
     else:
-        transform = rasterio.windows.transform(geometry_window, transform)
 
         # Clip the raster using the geometry
         # Update the portion of clipped_data that overlaps with the geometry
@@ -61,16 +59,23 @@ def extractPolygon(src, poly):
     return clipped_data.astype(np.float32), out_meta
 
 
-def run(res, padding, landbouw=True, grid='grid_vl', total_parts=1, part_nr=0):
+def run(res, padding, landbouw=True, blauw=True, grid='grid_vl', total_parts=1, part_nr=0, dsm_path=None, green_path=None, grid_path=None, output_name_postfix=""):
     global time, meta, bounds, transform, path
     landbouw_str = "_landbouw"
     if not landbouw:
         landbouw_str = ""
-    dsm_path = rf"input_data/DSM_{res}m.tif"
+    blauw_str = "_blauw"
+    if not blauw:
+        blauw_str = ""
+    if dsm_path is None:
+        dsm_path = rf"input_data/DSM_{res}m.tif"
     dtm_path = rf"input_data/DTM_{res}m.tif"
-    green_path = rf"input_data/green_01{landbouw_str}_{res}m.tif"
-    grid_path = rf"input_data/{grid}.gpkg"
-    out_path = rf"output/green_vis_vl_{res}m_{padding}m{landbouw_str}_{part_nr}.tif"
+    if green_path is None:
+        green_path = rf"input_data/green_01{landbouw_str}{blauw_str}_{res}m.tif"
+    if grid_path is None:
+        grid_path = rf"input_data/{grid}.gpkg"
+    out_path = rf"output/green_vis_vl_{res}m_{padding}m{landbouw_str}{blauw_str}_{part_nr}{output_name_postfix}.tif"
+    print(out_path)
     # log start time and log start
     time = datetime.now()
     print(f"processes, started at {time}.")
@@ -125,6 +130,9 @@ def run(res, padding, landbouw=True, grid='grid_vl', total_parts=1, part_nr=0):
                     dtm, meta = extractPolygon(dtm_input, [polygon])
                     dsm, _ = extractPolygon(dsm_input, [polygon])
                     green, _ = extractPolygon(green_input, [polygon])
+
+                    # fix dsm for ocean
+                    dsm = np.where(dsm < dtm, dtm, dsm)
 
                     xmin, ymin, xmax, ymax = bounds
                     x_res, y_res = green_input.res
@@ -199,16 +207,22 @@ def run(res, padding, landbouw=True, grid='grid_vl', total_parts=1, part_nr=0):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Run green visibility index calculation.')
-    parser.add_argument('total_parts', metavar='-tp', type=int,
-                        help='number of parts to split')
+    parser.add_argument('total_parts', metavar='-tp', type=int, help='number of parts to split')
     parser.add_argument('part_nr', type=int, metavar='-p', help='part to process')
+    parser.add_argument('-l', '--landbouw', action='store_true', help='enable landbouw')
+    parser.add_argument('-b', '--blauw', action='store_true', help='enable blauw')
 
     args = parser.parse_args()
     total_parts = args.total_parts
     part_nr = args.part_nr
+    landbouw = args.landbouw
+    blauw = args.blauw
+
     res = 5
     view_distances = [800]
+    # total_parts = 10
     # part_nr = 0
-    grid = 'grid_200m'
+    print(landbouw, blauw)
+    grid = 'zee_big'
     for view_distance in view_distances:
-        run(res, view_distance, landbouw=True, grid=grid, total_parts=total_parts, part_nr=part_nr)
+        run(res, view_distance, landbouw=landbouw, blauw=blauw, grid=grid, total_parts=total_parts, part_nr=part_nr, output_name_postfix=grid)
