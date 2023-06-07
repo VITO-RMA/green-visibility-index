@@ -31,9 +31,7 @@ def lineOfSight(pixels: np.ndarray, radius_px: int, visible_height_arr: np.ndarr
      * Runs a single ray-trace from one point to another point, returning a list of visible cells
     """
 
-    max_dydx = -50  # biggest dydx so far
-    if len(pixels) > 0 and len(pixels) < radius_px:
-        max_dydx = reached_height_arr[(pixels[0][0], pixels[0][1])]
+    max_dydx = reached_height_arr[(pixels[0][0], pixels[0][1])]
 
     for r1, c1 in pixels:
         cur_dydx = visible_height_arr[(r1, c1)]
@@ -164,9 +162,9 @@ def viewshed(radius_px, dsm_data, pixel_line_list, distance_arr):
     output[(radius_px, radius_px)] = 1
     # get the viewer height
 
-    reached_height_arr = zeros(distance_arr.shape, dtype=np.float32)
+    reached_height_arr = np.full(distance_arr.shape, -50, dtype=np.float32)
     visible_height_arr = dsm_data / distance_arr
-    visible_height_arr[radius_px, radius_px] = 0
+
     # max_height = np.max(visible_height_arr)
     # for pixels in pixel_line_list:
     for pixels in pixel_line_list:
