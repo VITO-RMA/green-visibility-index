@@ -65,7 +65,8 @@ def extractPolygon(src, poly):
     return clipped_data.astype(np.float32), out_meta
 
 
-def run(res, padding, landbouw=True, blauw=True, grid='grid_vl', total_parts=1, part_nr=0, dsm_path=None, green_path=None, grid_path=None, output_name_postfix="",year=2015):
+def run(res, padding, landbouw=True, blauw=True, grid='grid_vl', total_parts=1, part_nr=0, dsm_path=None, green_path=None, grid_path=None,
+        output_name_postfix="",year=2015, overwrite=False):
     global time, meta, bounds, transform, path
     landbouw_str = "_landbouw"
     if not landbouw:
@@ -83,8 +84,11 @@ def run(res, padding, landbouw=True, blauw=True, grid='grid_vl', total_parts=1, 
     out_path = rf"output/{year}/green_vis_vl_{res}m_{padding}m{landbouw_str}{blauw_str}_{part_nr}{output_name_postfix}.tif"
     print(out_path)
     if os.path.exists(out_path):
-        print(f"output already exists for this part_nr {part_nr}. skipping!")
-        exit()
+        if overwrite:
+            os.remove(out_path)
+        else:
+            print(f"output already exists for this part_nr {part_nr}. skipping!")
+            exit()
     # log start time and log start
     time = datetime.now()
     print(f"processes, started at {time}.")
@@ -229,9 +233,10 @@ if __name__ == '__main__':
     year = 2022
     res = 1
     view_distances = [800]
+    overwrite=True
     # total_parts = 10
     # part_nr = 0
     print(landbouw, blauw)
     grid = 'grid_vl'
     for view_distance in view_distances:
-        run(res, view_distance, landbouw=landbouw, blauw=blauw, grid=grid, total_parts=total_parts, part_nr=part_nr, output_name_postfix=grid,year=year)
+        run(res, view_distance, landbouw=landbouw, blauw=blauw, grid=grid, total_parts=total_parts, part_nr=part_nr, output_name_postfix=grid,year=year, overwrite=overwrite)
