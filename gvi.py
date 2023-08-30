@@ -26,7 +26,7 @@ def coords2Array(a, x, y):
 
 
 @njit(fastmath=True)
-def lineOfSight(pixels: np.ndarray, radius_px: int, visible_height_arr: np.ndarray, output: np.ndarray, reached_height_arr: np.ndarray):
+def lineOfSight(pixels: np.ndarray, visible_height_arr: np.ndarray, output: np.ndarray, reached_height_arr: np.ndarray):
     """
      * Runs a single ray-trace from one point to another point, returning a list of visible cells
     """
@@ -149,29 +149,21 @@ def numba_circle_perimeter(r, c, radius, shape=None):
 
 
 @njit(fastmath=True)
-def viewshed(radius_px, dsm_data, pixel_line_list, distance_arr):
+def viewshed(radius_px, visible_height_arr, pixel_line_list, distance_arr):
     """
     * Use Bresenham's Circle / Midpoint algorithm to determine endpoints for viewshed
     """
 
-    output = zeros(dsm_data.shape, dtype=np.byte)
-    # create output array at the same dimensions as data for viewshed
-    # output2 = zeros(dtm_data.shape)
+    output = zeros(distance_arr.shape, dtype=np.byte)
 
     # set the start location as visible automatically
     output[(radius_px, radius_px)] = 1
-    # get the viewer height
 
     reached_height_arr = np.full(distance_arr.shape, -50, dtype=np.float32)
-    visible_height_arr = dsm_data / distance_arr
 
-    # max_height = np.max(visible_height_arr)
-    # for pixels in pixel_line_list:
     for pixels in pixel_line_list:
-        lineOfSight(pixels, radius_px, visible_height_arr, output, reached_height_arr)
+        lineOfSight(pixels, visible_height_arr, output, reached_height_arr)
 
-    # return the resulting viewshed
-    # print(np.sum(output))
     return output
 
 
@@ -290,11 +282,11 @@ def calculate_green_visibility_index_for_part(gvi: np.ndarray, o_height: float, 
         for c in range(min_c, max_c + 1):
             # call (weighted) viewshed
             dsm_data = dsm[r - radius_px:r + radius_px + 1, c - radius_px:c + radius_px + 1] - dtm_o_height[(r, c)]
-
-            output = viewshed(radius_px, dsm_data, pixel_line_list, distance_arr)
+            visible_height_arr = dsm_data / distance_arr
+            output = viewshed(radius_px, visible_height_arr, pixel_line_list, distance_arr)
 
             # extract the viewshed data from the output surface and apply weighting mask
-            visible = output[0:radius_px * 2 + 1, 0:radius_px * 2 + 1] * weighting_mask
+            visible = output * weighting_mask
 
             # multiply extract of (weighted) viewshed with extract of (weighted) green dataset
             visible_green = visible * (green[r - radius_px:r + radius_px + 1, c - radius_px:c + radius_px + 1] * weighting_mask)
