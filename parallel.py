@@ -29,9 +29,15 @@ def extractPolygon(src, poly):
 
     # Get the extent of the geometry
     geometry_bounds = poly[0].bounds
+    resolution = src.res[0]
+    geometry_bounds_rounded = (np.floor(geometry_bounds[0] / resolution) * resolution,
+                               np.floor(geometry_bounds[1] / resolution) * resolution,
+                               np.ceil(geometry_bounds[2] / resolution) * resolution,
+                               np.ceil(geometry_bounds[3] / resolution) * resolution)
+
     transform = src.transform  # get the coordinate transformation
 
-    geometry_window = from_bounds(*geometry_bounds, transform=transform)
+    geometry_window = from_bounds(*geometry_bounds_rounded, transform=transform)
     # data, transform = rio_mask(src, poly, crop=True, all_touched=True)
     data = src.read(1, window=geometry_window)
     clipped_data = np.full((max(int(geometry_window.height), data.shape[0]), max(data.shape[1], int(geometry_window.width))), fill_value=0, dtype=np.float32)
@@ -42,7 +48,7 @@ def extractPolygon(src, poly):
 
         # Clip the raster using the geometry
         # Update the portion of clipped_data that overlaps with the geometry
-        window = rasterio.windows.from_bounds(*geometry_bounds, transform=transform)
+        window = rasterio.windows.from_bounds(*geometry_bounds_rounded, transform=transform)
         row_offset = abs(int(window.row_off)) if window.row_off < 0 else 0
         col_offset = abs(int(window.col_off)) if window.col_off < 0 else 0
         clipped_data[row_offset:row_offset + int(data.shape[0]), col_offset:col_offset + int(data.shape[1])] = data
@@ -59,7 +65,7 @@ def extractPolygon(src, poly):
     return clipped_data.astype(np.float32), out_meta
 
 
-def run(res, padding, landbouw=True, blauw=True, grid='grid_vl', total_parts=1, part_nr=0, dsm_path=None, green_path=None, grid_path=None, output_name_postfix=""):
+def run(res, padding, landbouw=True, blauw=True, grid='grid_vl', total_parts=1, part_nr=0, dsm_path=None, green_path=None, grid_path=None, output_name_postfix="",year=2015):
     global time, meta, bounds, transform, path
     landbouw_str = "_landbouw"
     if not landbouw:
@@ -68,14 +74,17 @@ def run(res, padding, landbouw=True, blauw=True, grid='grid_vl', total_parts=1, 
     if not blauw:
         blauw_str = ""
     if dsm_path is None:
-        dsm_path = rf"input_data/DSM_{res}m.tif"
-    dtm_path = rf"input_data/DTM_{res}m.tif"
+        dsm_path = rf"input_data/{year}/DSM_{res}m.tif"
+    dtm_path = rf"input_data/2015/DTM_{res}m.tif"
     if green_path is None:
-        green_path = rf"input_data/green_01{landbouw_str}{blauw_str}_{res}m.tif"
+        green_path = rf"input_data/{year}/green_01{landbouw_str}{blauw_str}_{res}m.tif"
     if grid_path is None:
         grid_path = rf"input_data/{grid}.gpkg"
-    out_path = rf"output/green_vis_vl_{res}m_{padding}m{landbouw_str}{blauw_str}_{part_nr}{output_name_postfix}.tif"
+    out_path = rf"output/{year}/green_vis_vl_{res}m_{padding}m{landbouw_str}{blauw_str}_{part_nr}{output_name_postfix}.tif"
     print(out_path)
+    if os.path.exists(out_path):
+        print(f"output already exists for this part_nr {part_nr}. skipping!")
+        exit()
     # log start time and log start
     time = datetime.now()
     print(f"processes, started at {time}.")
@@ -217,12 +226,12 @@ if __name__ == '__main__':
     part_nr = args.part_nr
     landbouw = args.landbouw
     blauw = args.blauw
-
-    res = 5
+    year = 2022
+    res = 1
     view_distances = [800]
     # total_parts = 10
     # part_nr = 0
     print(landbouw, blauw)
-    grid = 'zee_big'
+    grid = 'grid_vl'
     for view_distance in view_distances:
-        run(res, view_distance, landbouw=landbouw, blauw=blauw, grid=grid, total_parts=total_parts, part_nr=part_nr, output_name_postfix=grid)
+        run(res, view_distance, landbouw=landbouw, blauw=blauw, grid=grid, total_parts=total_parts, part_nr=part_nr, output_name_postfix=grid,year=year)

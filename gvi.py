@@ -239,6 +239,8 @@ def process_part(mask):
                   dtype='float32',
                   crs=mask["meta"]["crs"],
                   transform=mask['meta']['transform'],
+                  tiled=True,
+                  compress='deflate'
                   ) as dst:
         dst.write(gvi, 1)
     # print("part done", time.time() - t)
