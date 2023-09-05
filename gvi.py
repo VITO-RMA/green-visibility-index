@@ -8,7 +8,7 @@ from os.path import exists
 from uuid import uuid1
 
 import numpy as np
-from numba import njit, prange, intp
+from numba import njit, prange
 from numba.typed import List
 from numpy import zeros, column_stack
 from rasterio import open as rio_open
@@ -30,15 +30,14 @@ def lineOfSight(pixels: np.ndarray, visible_height_arr: np.ndarray, output: np.n
     """
      * Runs a single ray-trace from one point to another point, returning a list of visible cells
     """
-
-    max_dydx = reached_height_arr[(pixels[0][0], pixels[0][1])]
+    max_dydx = reached_height_arr[pixels[0, 0], pixels[0, 1]]
 
     for r1, c1 in pixels:
-        cur_dydx = visible_height_arr[(r1, c1)]
-        if (cur_dydx > max_dydx):
+        cur_dydx = visible_height_arr[r1, c1]
+        if cur_dydx > max_dydx:
             max_dydx = cur_dydx
-            output[(r1, c1)] = 1
-        reached_height_arr[(r1, c1)] = max_dydx
+            output[r1, c1] = 1
+        reached_height_arr[r1, c1] = max_dydx
 
 
 @njit
@@ -149,22 +148,15 @@ def numba_circle_perimeter(r, c, radius, shape=None):
 
 
 @njit(fastmath=True)
-def viewshed(radius_px, visible_height_arr, pixel_line_list):
+def viewshed(pixel_line_list, visible_height_arr, output, reached_height_arr, radius_px):
     """
     * Use Bresenham's Circle / Midpoint algorithm to determine endpoints for viewshed
     """
-
-    output = zeros(visible_height_arr.shape, dtype=np.byte)
-
     # set the start location as visible automatically
-    output[(radius_px, radius_px)] = 1
-
-    reached_height_arr = np.full(visible_height_arr.shape, -50, dtype=np.float32)
+    output[radius_px, radius_px] = 1
 
     for pixels in pixel_line_list:
         lineOfSight(pixels, visible_height_arr, output, reached_height_arr)
-
-    return output
 
 
 def distance_matrix(size, r, c, resolution):
@@ -208,8 +200,6 @@ def process_part(mask):
                                               mask["green"],
                                               max_c - min_c + radius_px,
                                               max_r - min_r + radius_px,
-                                              radius_px,
-                                              radius_px,
                                               radius_px, mask["weights"], pixel_line_list, mask['distance_arr'])
 
     # clip gvi to aoi bounds
@@ -276,24 +266,34 @@ def create_weighting_mask(resolution, radius_px):
 
 
 @njit(fastmath=True, parallel=True)
-def calculate_green_visibility_index_for_part(gvi: np.ndarray, o_height: float, dsm: np.ndarray, dtm: np.ndarray, green: np.ndarray, max_c: int, max_r: int, min_c: int,
-                                              min_r: int, radius_px: int, weighting_mask: np.ndarray, pixel_line_list: np.ndarray, distance_arr: np.ndarray):
+def calculate_green_visibility_index_for_part(gvi: np.ndarray, o_height: float, dsm: np.ndarray, dtm: np.ndarray, green: np.ndarray, max_c: int, max_r: int,
+                                              radius_px: int, weighting_mask: np.ndarray, pixel_line_list: np.ndarray, distance_arr: np.ndarray):
     dtm_o_height = dtm + o_height
-    for r in prange(min_r, max_r + 1):
-        for c in range(min_c, max_c + 1):
-            # call (weighted) viewshed
-            dsm_data = dsm[r - radius_px:r + radius_px + 1, c - radius_px:c + radius_px + 1] - dtm_o_height[(r, c)]
-            visible_height_arr = dsm_data / distance_arr
-            output = viewshed(radius_px, visible_height_arr, pixel_line_list)
+    for r in prange(radius_px, max_r + 1):
+        for c in range(radius_px, max_c + 1):
+            # Calculate the slice indices only once
+            r_slice = slice(r - radius_px, r + radius_px + 1)
+            c_slice = slice(c - radius_px, c + radius_px + 1)
 
-            # extract the viewshed data from the output surface and apply weighting mask
+            # Extract the necessary slices
+            dsm_data = dsm[r_slice, c_slice] - dtm_o_height[r, c]
+            visible_height_arr = dsm_data / distance_arr
+
+            # Preallocate memory for output and reached_height_arr
+            output = np.zeros(visible_height_arr.shape, dtype=np.byte)
+            reached_height_arr = np.full(visible_height_arr.shape, -50, dtype=np.float32)
+
+            # Calculate viewshed and update output and reached_height_arr
+            viewshed(pixel_line_list, visible_height_arr, output, reached_height_arr, radius_px)
+
+            # Extract the viewshed data from the output surface and apply weighting mask
             visible = output * weighting_mask
 
-            # multiply extract of (weighted) viewshed with extract of (weighted) green dataset
-            visible_green = visible * (green[r - radius_px:r + radius_px + 1, c - radius_px:c + radius_px + 1] * weighting_mask)
+            # Multiply extract of (weighted) viewshed with extract of (weighted) green dataset
+            visible_green = visible * green[r_slice, c_slice] * weighting_mask
 
-            # get the ratio for greenness in the view
-            gvi[(r, c)] = np.sum(visible_green) / np.sum(visible)
+            # Calculate the ratio for greenness in the view
+            gvi[r, c] = np.sum(visible_green) / np.sum(visible)
     return gvi
 
 
