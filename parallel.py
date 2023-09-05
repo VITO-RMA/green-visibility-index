@@ -4,9 +4,9 @@
 * This version is intended to be used with call gvi.py
 """
 import argparse
-import os
 from datetime import datetime
 import os
+
 os.environ['USE_PYGEOS'] = '0'
 import geopandas as gpd
 import numpy as np
@@ -66,7 +66,7 @@ def extractPolygon(src, poly):
 
 
 def run(res, padding, landbouw=True, blauw=True, grid='grid_vl', total_parts=1, part_nr=0, dsm_path=None, green_path=None, grid_path=None,
-        output_name_postfix="",year=2015, overwrite=False):
+        output_name_postfix="", year=2015, overwrite=False):
     global time, meta, bounds, transform, path
     landbouw_str = "_landbouw"
     if not landbouw:
@@ -143,7 +143,7 @@ def run(res, padding, landbouw=True, blauw=True, grid='grid_vl', total_parts=1, 
                     dtm, meta = extractPolygon(dtm_input, [polygon])
                     dsm, _ = extractPolygon(dsm_input, [polygon])
                     green, _ = extractPolygon(green_input, [polygon])
-
+                    green = green.astype(np.byte)
                     # fix dsm for ocean
                     dsm = np.where(dsm < dtm, dtm, dsm)
 
@@ -201,7 +201,9 @@ def run(res, padding, landbouw=True, blauw=True, grid='grid_vl', total_parts=1, 
         "height": merged.shape[1],
         "width": merged.shape[2],
         "transform": out_transform,
-        "dtype": 'float32'
+        "dtype": 'float32',
+        "tiled": True,
+        "compress": 'deflate'
     })
     # create a raster file
     with rio_open(out_path, 'w', **out_meta) as dst:
@@ -233,10 +235,10 @@ if __name__ == '__main__':
     year = 2022
     res = 1
     view_distances = [800]
-    overwrite=True
+    overwrite = True
     # total_parts = 10
     # part_nr = 0
     print(landbouw, blauw)
     grid = 'grid_vl'
     for view_distance in view_distances:
-        run(res, view_distance, landbouw=landbouw, blauw=blauw, grid=grid, total_parts=total_parts, part_nr=part_nr, output_name_postfix=grid,year=year, overwrite=overwrite)
+        run(res, view_distance, landbouw=landbouw, blauw=blauw, grid=grid, total_parts=total_parts, part_nr=part_nr, output_name_postfix=grid, year=year, overwrite=overwrite)

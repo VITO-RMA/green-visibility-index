@@ -149,17 +149,17 @@ def numba_circle_perimeter(r, c, radius, shape=None):
 
 
 @njit(fastmath=True)
-def viewshed(radius_px, visible_height_arr, pixel_line_list, distance_arr):
+def viewshed(radius_px, visible_height_arr, pixel_line_list):
     """
     * Use Bresenham's Circle / Midpoint algorithm to determine endpoints for viewshed
     """
 
-    output = zeros(distance_arr.shape, dtype=np.byte)
+    output = zeros(visible_height_arr.shape, dtype=np.byte)
 
     # set the start location as visible automatically
     output[(radius_px, radius_px)] = 1
 
-    reached_height_arr = np.full(distance_arr.shape, -50, dtype=np.float32)
+    reached_height_arr = np.full(visible_height_arr.shape, -50, dtype=np.float32)
 
     for pixels in pixel_line_list:
         lineOfSight(pixels, visible_height_arr, output, reached_height_arr)
@@ -220,7 +220,7 @@ def process_part(mask):
         makedirs('tmp')
 
     # make unique filename
-    filepath = f'./tmp/{str(uuid1())[:16]}.tif'
+    filepath = f'./tmp/{str(uuid1())}.tif'
 
     # output file with updated dimensions and transform
     with rio_open(filepath, 'w',
@@ -248,6 +248,7 @@ def create_los_lines(radius_px):
     for r, c in column_stack((los_path_rr, los_path_cc)):
         # calculate line of sight to each pixel
         pixels = column_stack(numba_line(radius_px, radius_px, r, c))[1:]
+        pixels = pixels.astype(np.int32)
         if previous_pixels is not None:
             new_part = pixels.copy()
             for pp, pn in zip(previous_pixels, pixels):
@@ -283,7 +284,7 @@ def calculate_green_visibility_index_for_part(gvi: np.ndarray, o_height: float, 
             # call (weighted) viewshed
             dsm_data = dsm[r - radius_px:r + radius_px + 1, c - radius_px:c + radius_px + 1] - dtm_o_height[(r, c)]
             visible_height_arr = dsm_data / distance_arr
-            output = viewshed(radius_px, visible_height_arr, pixel_line_list, distance_arr)
+            output = viewshed(radius_px, visible_height_arr, pixel_line_list)
 
             # extract the viewshed data from the output surface and apply weighting mask
             visible = output * weighting_mask
