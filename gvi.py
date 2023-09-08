@@ -26,18 +26,16 @@ def coords2Array(a, x, y):
 
 
 @njit(fastmath=True)
-def lineOfSight(pixels: np.ndarray, visible_height_arr: np.ndarray, output: np.ndarray, reached_height_arr: np.ndarray):
+def lineOfSight(pixels: np.ndarray, visible_height_arr: np.ndarray, output: np.ndarray):
     """
      * Runs a single ray-trace from one point to another point, returning a list of visible cells
     """
-    max_dydx = reached_height_arr[pixels[0, 0], pixels[0, 1]]
-
+    max_dydx = -500
     for r1, c1 in pixels:
         cur_dydx = visible_height_arr[r1, c1]
         if cur_dydx > max_dydx:
             max_dydx = cur_dydx
             output[r1, c1] = 1
-        reached_height_arr[r1, c1] = max_dydx
 
 
 @njit
@@ -148,27 +146,22 @@ def numba_circle_perimeter(r, c, radius, shape=None):
 
 
 @njit(fastmath=True)
-def viewshed(pixel_line_list, visible_height_arr, output, reached_height_arr, radius_px):
+def viewshed(pixel_line_list, visible_height_arr, output):
     """
     * Use Bresenham's Circle / Midpoint algorithm to determine endpoints for viewshed
     """
-    # set the start location as visible automatically
-    output[radius_px, radius_px] = 1
-
     for pixels in pixel_line_list:
-        lineOfSight(pixels, visible_height_arr, output, reached_height_arr)
+        lineOfSight(pixels, visible_height_arr, output)
 
 
 def distance_matrix(size, r, c, resolution):
     # Create an empty distance matrix of the same size as the input matrix
     dist_matrix = np.zeros((size, size), dtype=np.float32)
-    # Calculate the center row and column index
-    center_row = r
-    center_col = c
+
     # Iterate through each cell of the matrix and calculate the distance to the center cell
     for i in range(size):
         for j in range(size):
-            dist_matrix[i, j] = hypot(i - center_row, j - center_col) * resolution
+            dist_matrix[i, j] = hypot(i - r, j - c) * resolution
     return dist_matrix
 
 
@@ -253,7 +246,7 @@ def create_los_lines(radius_px):
             pixel_line_list.append(new_part)
         else:
             pixel_line_list.append(pixels)
-        previous_pixels = pixels
+        # previous_pixels = pixels  #deactivate double line skipping, because the code is memory bandwith bound, so calculating extra pixels is faster then keeping track of already done pixels
     print(sum([len(a) for a in pixel_line_list]))
     return pixel_line_list
 
@@ -279,12 +272,12 @@ def calculate_green_visibility_index_for_part(gvi: np.ndarray, o_height: float, 
             dsm_data = dsm[r_slice, c_slice] - dtm_o_height[r, c]
             visible_height_arr = dsm_data / distance_arr
 
-            # Preallocate memory for output and reached_height_arr
+            # Preallocate memory for output
             output = np.zeros(visible_height_arr.shape, dtype=np.byte)
-            reached_height_arr = np.full(visible_height_arr.shape, -50, dtype=np.float32)
-
+            # set the start location as visible automatically
+            output[radius_px, radius_px] = 1
             # Calculate viewshed and update output and reached_height_arr
-            viewshed(pixel_line_list, visible_height_arr, output, reached_height_arr, radius_px)
+            viewshed(pixel_line_list, visible_height_arr, output)
 
             # Extract the viewshed data from the output surface and apply weighting mask
             visible = output * weighting_mask
