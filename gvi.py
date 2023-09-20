@@ -185,15 +185,17 @@ def process_part(mask):
     pixel_line_list = List(mask["pixel_line_list"])
 
     # Set up the kernel configuration.
-
+    dtm_o_height = mask["dtm"] + mask["options"]["o_height"]
+    r_slices = List([slice(r - radius_px, r + radius_px + 1) for r in range(radius_px, max_c - min_c + radius_px + 1)])
+    c_slices = List([slice(c - radius_px, c + radius_px + 1) for c in range(radius_px, max_c - min_c + radius_px + 1)])
     calculate_green_visibility_index_for_part(gvi,
-                                              mask["options"]["o_height"],  # observer height
+                                              dtm_o_height,  # observer height
                                               mask["dsm"],  # dsm dataset
-                                              mask["dtm"],
                                               mask["green"],
                                               max_c - min_c + radius_px,
                                               max_r - min_r + radius_px,
-                                              radius_px, mask["weights"], pixel_line_list, mask['distance_arr'])
+                                              radius_px, mask["weights"], pixel_line_list, mask['distance_arr'],
+                                              r_slices, c_slices)
 
     # clip gvi to aoi bounds
     gvi = gvi[radius_px:gvi.shape[0] - radius_px, radius_px:gvi.shape[1] - radius_px]
@@ -259,21 +261,26 @@ def create_weighting_mask(resolution, radius_px):
 
 
 @njit(fastmath=True, parallel=True)
-def calculate_green_visibility_index_for_part(gvi: np.ndarray, o_height: float, dsm: np.ndarray, dtm: np.ndarray, green: np.ndarray, max_c: int, max_r: int,
-                                              radius_px: int, weighting_mask: np.ndarray, pixel_line_list: np.ndarray, distance_arr: np.ndarray):
-    dtm_o_height = dtm + o_height
+def calculate_green_visibility_index_for_part(gvi: np.ndarray, dtm_o_height: np.ndarray, dsm: np.ndarray, green: np.ndarray, max_c: int, max_r: int,
+                                              radius_px: int, weighting_mask: np.ndarray, pixel_line_list: np.ndarray, distance_arr: np.ndarray,
+                                              r_slices, c_slices):
+    # Preallocate memory for output
+    all_outputs = [np.zeros((2 * radius_px + 1, 2 * radius_px + 1), dtype=np.byte)
+                   for i in range(radius_px, max_r + 1)]
+
     for r in prange(radius_px, max_r + 1):
+        # Directly pick the buffer based on the loop index
+        output = all_outputs[r - radius_px]
+
         for c in range(radius_px, max_c + 1):
             # Calculate the slice indices only once
-            r_slice = slice(r - radius_px, r + radius_px + 1)
-            c_slice = slice(c - radius_px, c + radius_px + 1)
+            r_slice = r_slices[r - radius_px]
+            c_slice = c_slices[c - radius_px]
 
             # Extract the necessary slices
             dsm_data = dsm[r_slice, c_slice] - dtm_o_height[r, c]
             visible_height_arr = dsm_data / distance_arr
-
-            # Preallocate memory for output
-            output = np.zeros(visible_height_arr.shape, dtype=np.byte)
+            output.fill(0)
             # set the start location as visible automatically
             output[radius_px, radius_px] = 1
             # Calculate viewshed and update output and reached_height_arr
