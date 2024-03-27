@@ -1,14 +1,8 @@
 import os
 
-import numpy as np
-
-import geopandas as gpd
-import rasterio
-from rasterio.features import rasterize
-
 os.environ['USE_PYGEOS'] = '0'
 import geopandas as gpd
-from parallel import extractPolygon, run
+from parallel import extract_polygon, run
 from rasterio import open as rio_open
 import rasterio
 import numpy as np
@@ -98,9 +92,9 @@ def add_tree(x, y, height, size, res, view_distance, landbouw=False, blauw=False
     with rio_open(dtm_path) as dtm_input:
         with rio_open(dsm_path) as dsm_input:
             with rio_open(green_path) as green_input:
-                dsm_arr, t_poly = extractPolygon(dsm_input, grid)
-                dtm_arr, _ = extractPolygon(dtm_input, grid)
-                green_arr, _ = extractPolygon(green_input, grid)
+                dsm_arr, t_poly = extract_polygon(dsm_input, grid)
+                dtm_arr, _ = extract_polygon(dtm_input, grid)
+                green_arr, _ = extract_polygon(green_input, grid)
                 row, col = rasterio.transform.rowcol(t_poly['transform'], snapped_x, snapped_y)
     new_dsm_arr = place_small_array(dsm_arr, dtm_arr, sphere_arr, int(row), int(col))
     new_green_arr = place_small_array(green_arr, np.zeros_like(green_arr), np.where(sphere_arr > 0, 1, 0), int(row), int(col))
@@ -140,9 +134,9 @@ def change_building(geometry_df, height, add, res, view_distance, year):
     with rio_open(dtm_path) as dtm_input:
         with rio_open(dsm_path) as dsm_input:
             with rio_open(green_path) as green_input:
-                dsm_arr, t_poly = extractPolygon(dsm_input, grid)
-                dtm_arr, _ = extractPolygon(dtm_input, grid)
-                green_arr, _ = extractPolygon(green_input, grid)
+                dsm_arr, t_poly = extract_polygon(dsm_input, grid)
+                dtm_arr, _ = extract_polygon(dtm_input, grid)
+                green_arr, _ = extract_polygon(green_input, grid)
                 building_arr = create_geometry_raster(geometry_df, dtm_arr.shape[0], dtm_arr.shape[1], t_poly['transform'])
     geometry_df['geometry'] = geometry_df.buffer(view_distance + res / 2).envelope
     new_dsm_arr = np.where(building_arr == 1, dtm_arr + height if add else dtm_arr, dsm_arr)

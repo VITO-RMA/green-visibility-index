@@ -1,11 +1,6 @@
-"""
-* Divide and Conquour script to divide, process in parallel and merge again without having
-*	to worry about edge effects.
-* This version is intended to be used with call gvi.py
-"""
 import argparse
-from datetime import datetime
 import os
+from datetime import datetime
 
 os.environ['USE_PYGEOS'] = '0'
 import geopandas as gpd
@@ -21,7 +16,7 @@ from tqdm import tqdm
 from gvi import process_part, create_weighting_mask, create_los_lines, distance_matrix
 
 
-def extractPolygon(src, poly):
+def extract_polygon(src, poly):
     """
     * extract a subset from a raster according to the specified bounds
     * returns the dataset (numpy array) and metadata object
@@ -140,9 +135,9 @@ def run(res, padding, landbouw=True, blauw=True, grid='grid_vl', total_parts=1, 
                     ])
 
                     # extract the polygon and append to masks list
-                    dtm, meta = extractPolygon(dtm_input, [polygon])
-                    dsm, _ = extractPolygon(dsm_input, [polygon])
-                    green, _ = extractPolygon(green_input, [polygon])
+                    dtm, meta = extract_polygon(dtm_input, [polygon])
+                    dsm, _ = extract_polygon(dsm_input, [polygon])
+                    green, _ = extract_polygon(green_input, [polygon])
                     green = green.astype(np.byte)
                     # fix dsm for ocean
                     dsm = np.where(dsm < dtm, dtm, dsm)
@@ -239,6 +234,6 @@ if __name__ == '__main__':
     # total_parts = 10
     # part_nr = 0
     print(landbouw, blauw)
-    grid = 'grid_vl'
+    grid = 'grid_tiny'
     for view_distance in view_distances:
         run(res, view_distance, landbouw=landbouw, blauw=blauw, grid=grid, total_parts=total_parts, part_nr=part_nr, output_name_postfix=grid, year=year, overwrite=overwrite)

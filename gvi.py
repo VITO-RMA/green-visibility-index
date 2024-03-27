@@ -16,7 +16,7 @@ from rasterio.transform import rowcol
 from skimage.draw import disk
 
 
-def coords2Array(a, x, y):
+def coords2_array(a, x, y):
     """
     * convert between coords and array position
     *  returns row,col (y,x) as expected by rasterio
@@ -26,9 +26,15 @@ def coords2Array(a, x, y):
 
 
 @njit(fastmath=True)
-def lineOfSight(pixels: np.ndarray, visible_height_arr: np.ndarray, output: np.ndarray):
+def line_of_sight(pixels: np.ndarray, visible_height_arr: np.ndarray, output: np.ndarray):
     """
-     * Runs a single ray-trace from one point to another point, returning a list of visible cells
+    This method calculates the line of sight for each pixel in a given array.
+
+    Parameters:
+    - pixels (np.ndarray): An array containing coordinates of pixels. Each pixel is represented by a tuple (r, c), where r is the row index and c is the column index.
+    - visible_height_arr (np.ndarray): An array representing the height of each pixel.
+    - output (np.ndarray): An array to store the line of sight information. For each pixel, if it has line of sight, the corresponding element in output array will be set to 1.
+
     """
     max_dydx = -500
     for r1, c1 in pixels:
@@ -40,6 +46,19 @@ def lineOfSight(pixels: np.ndarray, visible_height_arr: np.ndarray, output: np.n
 
 @njit
 def numba_line(r0, c0, r1, c1):
+    """
+    Compute the coordinates of a line between two given points using the Bresenham's line algorithm.
+
+    Parameters:
+    - r0: int, the row coordinate of the starting point.
+    - c0: int, the column coordinate of the starting point.
+    - r1: int, the row coordinate of the ending point.
+    - c1: int, the column coordinate of the ending point.
+
+    Returns:
+    - rr: numpy.ndarray, the row coordinates of the line.
+    - cc: numpy.ndarray, the column coordinates of the line.
+    """
     # Compute differences and absolute differences
     dr = abs(r1 - r0)
     dc = abs(c1 - c0)
@@ -151,7 +170,7 @@ def viewshed(pixel_line_list, visible_height_arr, output):
     * Use Bresenham's Circle / Midpoint algorithm to determine endpoints for viewshed
     """
     for pixels in pixel_line_list:
-        lineOfSight(pixels, visible_height_arr, output)
+        line_of_sight(pixels, visible_height_arr, output)
 
 
 def distance_matrix(size, r, c, resolution):
@@ -179,8 +198,8 @@ def process_part(mask):
     # build weighting mask
 
     # get pixel references for aoi extents
-    min_r, min_c = coords2Array(mask["meta"]["transform"], mask["aoi"].bounds[0], mask["aoi"].bounds[3])
-    max_r, max_c = coords2Array(mask["meta"]["transform"], mask["aoi"].bounds[2], mask["aoi"].bounds[1])
+    min_r, min_c = coords2_array(mask["meta"]["transform"], mask["aoi"].bounds[0], mask["aoi"].bounds[3])
+    max_r, max_c = coords2_array(mask["meta"]["transform"], mask["aoi"].bounds[2], mask["aoi"].bounds[1])
 
     pixel_line_list = List(mask["pixel_line_list"])
 
