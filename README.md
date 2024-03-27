@@ -67,6 +67,6 @@ using #SBATCH --array=0-1000 will run the script 1000 times with different parts
 Making 1000 jobs on the queue.
 Our total input was around 3500 squares in the grid, so each job processes 3-4 tiles.
 
-## Other languages
-
-An R port of this repository is available at: [![STBrinkmann R Library](https://badgen.net/badge/STBrinkmann/R%20Library/blue?icon=github)](https://github.com/STBrinkmann/GVI)
+## Fork 
+This fork has been made to attempt to increase the execution speed of the code to allow it to process all of belgium in a reasonable time.
+Now our dataset at 5m resolution (about 840 million pixels) can be processed on the VSC cluster in 15 minutes using 750 CPUs.
