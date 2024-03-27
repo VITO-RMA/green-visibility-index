@@ -61,7 +61,7 @@ def extract_polygon(src, poly):
 
 
 def run(res, padding, landbouw=True, blauw=True, grid='grid_vl', total_parts=1, part_nr=0, dsm_path=None, green_path=None, grid_path=None,
-        output_name_postfix="", year=2015, overwrite=False):
+        output_name_postfix="", year=2015, overwrite=False, name_postfix=""):
     global time, meta, bounds, transform, path
     landbouw_str = "_landbouw"
     if not landbouw:
@@ -70,12 +70,12 @@ def run(res, padding, landbouw=True, blauw=True, grid='grid_vl', total_parts=1, 
     if not blauw:
         blauw_str = ""
     if dsm_path is None:
-        dsm_path = rf"input_data/{year}/DSM_{res}m.tif"
-    dtm_path = rf"input_data/2015/DTM_{res}m.tif"
+        dsm_path = rf"input_data/{year}/DSM_{res}m{name_postfix}.tif"
+    dtm_path = rf"input_data/2015/DTM_{res}m{name_postfix}.tif"
     if green_path is None:
-        green_path = rf"input_data/{year}/green_01{landbouw_str}{blauw_str}_{res}m.tif"
+        green_path = rf"input_data/{year}/green_01{landbouw_str}{blauw_str}_{res}m{name_postfix}.tif"
     if grid_path is None:
-        grid_path = rf"input_data/{grid}.gpkg"
+        grid_path = rf"input_data/{grid}{name_postfix}.gpkg"
     out_path = rf"output/{year}/green_vis_vl_{res}m_{padding}m{landbouw_str}{blauw_str}_{part_nr}{output_name_postfix}.tif"
     print(out_path)
     if os.path.exists(out_path):
@@ -234,6 +234,8 @@ if __name__ == '__main__':
     # total_parts = 10
     # part_nr = 0
     print(landbouw, blauw)
-    grid = 'grid_tiny'
+    grid = 'grid'
+    name_postfix = '_tiny'
     for view_distance in view_distances:
-        run(res, view_distance, landbouw=landbouw, blauw=blauw, grid=grid, total_parts=total_parts, part_nr=part_nr, output_name_postfix=grid, year=year, overwrite=overwrite)
+        run(res, view_distance, landbouw=landbouw, blauw=blauw, grid=grid, total_parts=total_parts, part_nr=part_nr, output_name_postfix=grid, year=year, overwrite=overwrite,
+            name_postfix=name_postfix)
