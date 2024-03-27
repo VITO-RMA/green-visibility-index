@@ -16,13 +16,13 @@ from rasterio.transform import rowcol
 from skimage.draw import disk
 
 
-def coords2_array(a, x, y):
-    """
-    * convert between coords and array position
-    *  returns row,col (y,x) as expected by rasterio
-    """
-    r, c = rowcol(a, x, y)
-    return int(r), int(c)
+def coords_2_array(a, x, y):
+	"""
+	* convert between coords and array position
+	*  returns row,col (y,x) as expected by rasterio
+	"""
+	r, c = rowcol(a, x, y)
+	return int(r), int(c)
 
 
 @njit(fastmath=True)
