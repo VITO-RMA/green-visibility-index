@@ -198,8 +198,8 @@ def process_part(mask):
     # build weighting mask
 
     # get pixel references for aoi extents
-    min_r, min_c = coords2_array(mask["meta"]["transform"], mask["aoi"].bounds[0], mask["aoi"].bounds[3])
-    max_r, max_c = coords2_array(mask["meta"]["transform"], mask["aoi"].bounds[2], mask["aoi"].bounds[1])
+    min_r, min_c = coords_2_array(mask["meta"]["transform"], mask["aoi"].bounds[0], mask["aoi"].bounds[3])
+    max_r, max_c = coords_2_array(mask["meta"]["transform"], mask["aoi"].bounds[2], mask["aoi"].bounds[1])
 
     pixel_line_list = List(mask["pixel_line_list"])
 
